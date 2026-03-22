@@ -69,6 +69,14 @@ jobs:
           $ReleaseName = Get-Date -f "yyyy.MM.dd"
           echo "RELEASE_NAME=$ReleaseName" >> $env:GITHUB_ENV
 
+      - name: Create tag for manual release
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git tag "${{ env.RELEASE_NAME }}"
+          git push origin "${{ env.RELEASE_NAME }}"
+          
       - name: Uploading
         uses: softprops/action-gh-release@master
         with:
