@@ -44,6 +44,7 @@ jobs:
           patch "ReVanced_Builder\youtube.apk" `
           --patches "ReVanced_Builder\revanced-patches.rvp" `
           --purge `
+          -b `
           --out "ReVanced_Builder\youtube_revanced.apk"
 
       - name: Creating archive
