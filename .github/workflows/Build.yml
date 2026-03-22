@@ -9,7 +9,7 @@ on:
 jobs:
   patch:
     runs-on: windows-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       contents: write
     steps:
@@ -33,7 +33,6 @@ jobs:
       - name: Zulu JDK
         run: . Scripts\Zulu_JDK.ps1
 
-      # NEW STEP: Create the branding configuration
       - name: Create Patch Options
         shell: pwsh
         run: |
@@ -79,20 +78,29 @@ jobs:
           $DateStr = Get-Date -f "yyyy.MM.dd"
           git fetch --tags
           $ExistingTags = git tag -l "$DateStr-v*" | Sort-Object -Descending
-          $NextVersion = if ($ExistingTags.Count -eq 0) { 1 } else { [int]($ExistingTags[0].Split('-v')[-1]) + 1 }
+          
+          if ($ExistingTags.Count -eq 0) {
+              $NextVersion = 1
+          } else {
+              $Latest = $ExistingTags[0]
+              $NextVersion = [int]($Latest.Split('-v')[-1]) + 1
+          }
+          
           $FinalTag = "$DateStr-v$NextVersion"
-          echo "RELEASE_TAG=$FinalTag" >> $env:GITHUB_ENV
+          "RELEASE_TAG=$FinalTag" | Out-File -FilePath $env:GITHUB_ENV -Append
           
           $TemplatePath = "ReleaseNotesTemplate.md"
           if (Test-Path $TemplatePath) {
-              (Get-Content $TemplatePath -Raw) `
-                .Replace("YouTubeTag", "${{ env.LatestSupportedYT }}") `
-                .Replace("CLITag", "${{ env.CLIvtag }}") `
-                .Replace("PatchesTag", "${{ env.Patchesvtag }}") `
-                .Replace("MicroGTag", "${{ env.MicroGTag }}") `
-                .Replace("ZuluTag", "${{ env.ZuluTag }}") | Set-Content $TemplatePath -Force
+              $Content = Get-Content -Path $TemplatePath -Raw
+              # Fixed sequential replacement syntax to avoid ParserErrors
+              $Content = $Content.Replace("YouTubeTag", "${{ env.LatestSupportedYT }}")
+              $Content = $Content.Replace("CLITag", "${{ env.CLIvtag }}")
+              $Content = $Content.Replace("PatchesTag", "${{ env.Patchesvtag }}")
+              $Content = $Content.Replace("MicroGTag", "${{ env.MicroGTag }}")
+              $Content = $Content.Replace("ZuluTag", "${{ env.ZuluTag }}")
+              $Content | Set-Content -Path $TemplatePath -Force
           }
-          echo "ReleaseBody=$TemplatePath" >> $env:GITHUB_OUTPUT
+          "ReleaseBody=$TemplatePath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - name: Push Tag with Fallback
         if: github.event_name == 'workflow_dispatch'
@@ -104,8 +112,9 @@ jobs:
               git tag "${{ env.RELEASE_TAG }}"
               git push origin "${{ env.RELEASE_TAG }}"
           } catch {
+              Write-Host "Tag creation failed, falling back to Run ID..."
               $FallbackTag = "${{ env.RELEASE_TAG }}-run-${{ github.run_id }}"
-              echo "RELEASE_TAG=$FallbackTag" >> $env:GITHUB_ENV
+              "RELEASE_TAG=$FallbackTag" | Out-File -FilePath $env:GITHUB_ENV -Append
               git tag "$FallbackTag"
               git push origin "$FallbackTag"
           }
@@ -118,4 +127,3 @@ jobs:
           files: ReVanced.zip
           body_path: ${{ steps.prep_release.outputs.ReleaseBody }}
           token: ${{ github.token }}
-          
