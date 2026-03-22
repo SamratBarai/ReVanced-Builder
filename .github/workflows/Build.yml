@@ -39,7 +39,7 @@ jobs:
         run: |
           $Options = @(
             @{
-              patchName = "Custom branding name YouTube"
+              patchName = "Custom branding name MeTube"
               options = @(
                 @{
                   key = "appName"
@@ -57,6 +57,7 @@ jobs:
           patch "ReVanced_Builder\youtube.apk" `
           --patches "ReVanced_Builder\revanced-patches.rvp" `
           --options "ReVanced_Builder\options.json" `
+          -e "Custom branding name MeTube"
           --purge `
           -b `
           --out "ReVanced_Builder\youtube_revanced.apk"
