@@ -4,45 +4,59 @@ on:
   push:
     tags:
       - "*"
-
   workflow_dispatch:
 
 jobs:
   patch:
     runs-on: windows-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@main
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: YouTube
-        run: |
-          . Scripts\YouTube.ps1
+        run: . Scripts\YouTube.ps1
 
       - name: ReVanced CLI
-        run: |
-          . Scripts\ReVanced_CLI.ps1
+        run: . Scripts\ReVanced_CLI.ps1
 
       - name: Downloading ReVanced Patches
-        run: |
-          . Scripts\ReVanced_Patches.ps1
+        run: . Scripts\ReVanced_Patches.ps1
 
       - name: Vanced MicroG
-        run: |
-          . Scripts\MicroG.ps1
+        run: . Scripts\MicroG.ps1
 
       - name: Zulu JDK
+        run: . Scripts\Zulu_JDK.ps1
+
+      # NEW STEP: Create the branding configuration
+      - name: Create Patch Options
+        shell: pwsh
         run: |
-          . Scripts\Zulu_JDK.ps1
+          $Options = @(
+            @{
+              patchName = "Custom branding name YouTube"
+              options = @(
+                @{
+                  key = "appName"
+                  value = "MeTube"
+                }
+              )
+            }
+          )
+          $Options | ConvertTo-Json -Depth 10 | Set-Content -Path "ReVanced_Builder\options.json" -Encoding utf8
 
       - name: Building
         run: |
-          # https://revanced.app/patches?pkg=com.google.android.youtube
-          # https://github.com/ReVanced/revanced-cli/tree/main/docs
-
           & "$env:ProgramFiles\Zulu\zulu*\bin\java.exe" `
           -jar "ReVanced_Builder\revanced-cli.jar" `
           patch "ReVanced_Builder\youtube.apk" `
           --patches "ReVanced_Builder\revanced-patches.rvp" `
+          --options "ReVanced_Builder\options.json" `
           --purge `
           -b `
           --out "ReVanced_Builder\youtube_revanced.apk"
@@ -57,32 +71,50 @@ jobs:
           }
           Compress-Archive @Parameters
 
-      - name: ReleaseNotesTemplate
-        id: read_release
+      - name: Generate Dynamic Tag & Release Notes
+        id: prep_release
+        shell: pwsh
         run: |
-          # https://en.wikipedia.org/wiki/Percent-encoding
-          (Get-Content -Path ReleaseNotesTemplate.md -Encoding utf8 -Raw).replace("YouTubeTag", "${{ env.LatestSupportedYT }}").replace("CLITag", "${{ env.CLIvtag }}").replace("PatchesTag", "${{ env.Patchesvtag }}").replace("MicroGTag", "${{ env.MicroGTag }}").replace("ZuluTag", "${{ env.ZuluTag }}") | Set-Content -Path ReleaseNotesTemplate.md -Encoding utf8 -Force
+          $DateStr = Get-Date -f "yyyy.MM.dd"
+          git fetch --tags
+          $ExistingTags = git tag -l "$DateStr-v*" | Sort-Object -Descending
+          $NextVersion = if ($ExistingTags.Count -eq 0) { 1 } else { [int]($ExistingTags[0].Split('-v')[-1]) + 1 }
+          $FinalTag = "$DateStr-v$NextVersion"
+          echo "RELEASE_TAG=$FinalTag" >> $env:GITHUB_ENV
+          
+          $TemplatePath = "ReleaseNotesTemplate.md"
+          if (Test-Path $TemplatePath) {
+              (Get-Content $TemplatePath -Raw) `
+                .Replace("YouTubeTag", "${{ env.LatestSupportedYT }}") `
+                .Replace("CLITag", "${{ env.CLIvtag }}") `
+                .Replace("PatchesTag", "${{ env.Patchesvtag }}") `
+                .Replace("MicroGTag", "${{ env.MicroGTag }}") `
+                .Replace("ZuluTag", "${{ env.ZuluTag }}") | Set-Content $TemplatePath -Force
+          }
+          echo "ReleaseBody=$TemplatePath" >> $env:GITHUB_OUTPUT
 
-          # https://trstringer.com/github-actions-multiline-strings/
-          Add-Content -Path $env:GITHUB_OUTPUT -Value "ReleaseBody=ReleaseNotesTemplate.md"
-
-          $ReleaseName = Get-Date -f "yyyy.MM.dd"
-          echo "RELEASE_NAME=$ReleaseName" >> $env:GITHUB_ENV
-
-      - name: Create tag for manual release
+      - name: Push Tag with Fallback
         if: github.event_name == 'workflow_dispatch'
+        shell: pwsh
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          git tag "${{ env.RELEASE_NAME }}"
-          git push origin "${{ env.RELEASE_NAME }}"
-          
-      - name: Uploading
-        uses: softprops/action-gh-release@master
+          try {
+              git tag "${{ env.RELEASE_TAG }}"
+              git push origin "${{ env.RELEASE_TAG }}"
+          } catch {
+              $FallbackTag = "${{ env.RELEASE_TAG }}-run-${{ github.run_id }}"
+              echo "RELEASE_TAG=$FallbackTag" >> $env:GITHUB_ENV
+              git tag "$FallbackTag"
+              git push origin "$FallbackTag"
+          }
+
+      - name: Uploading Release
+        uses: softprops/action-gh-release@v2
         with:
-          name: ${{ env.RELEASE_NAME }}
-          token: ${{ github.token }}
+          name: "Build ${{ env.RELEASE_TAG }}"
+          tag_name: ${{ env.RELEASE_TAG }}
           files: ReVanced.zip
-          body_path: ${{ steps.read_release.outputs.ReleaseBody }}
-
-
+          body_path: ${{ steps.prep_release.outputs.ReleaseBody }}
+          token: ${{ github.token }}
+          
